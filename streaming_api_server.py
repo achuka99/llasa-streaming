@@ -46,8 +46,6 @@ client = AsyncOpenAI(base_url=VLLM_BASE_URL, api_key=VLLM_API_KEY)
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
 xcodec_model = XCodec2Model.from_pretrained(XCODEC2_MODEL_NAME)
 xcodec_model = xcodec_model.to(CODEC_DEVICE).eval()
-if CODEC_DEVICE == "cuda":
-    xcodec_model = xcodec_model.half()
 
 print(f"XCodec2 model loaded on {CODEC_DEVICE}")
 print(f"Tokenizer loaded from {MODEL_NAME}")
@@ -373,4 +371,4 @@ if __name__ == "__main__":
     print(f"Model: {MODEL_NAME}")
     print(f"Codec: {XCODEC2_MODEL_NAME}")
     print(f"Device: {CODEC_DEVICE}")
-    uvicorn.run("streaming_api_server:app", host="0.0.0.0", port=8001, reload=False)
+    uvicorn.run("streaming_api_server:app", host="0.0.0.0", port=8002, reload=False)
