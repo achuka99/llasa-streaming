@@ -65,8 +65,16 @@ class AudioRequest(BaseModel):
     repetition_penalty: float = DEFAULT_REPETITION_PENALTY
 
 def format_prompt(text: str):
-    """Format prompt for Llasa TTS (text understanding -> speech generation)"""
-    return f"{TEXT_START}{text}{TEXT_END}"
+    """Format prompt for Llasa TTS using chat template (text understanding -> speech generation)"""
+    # Use the official Llasa format with chat template
+    formatted_text = f"<|TEXT_UNDERSTANDING_START|>{text}<|TEXT_UNDERSTANDING_END|>"
+    chat = [
+        {"role": "user", "content": "Convert the text to speech:" + formatted_text},
+        {"role": "assistant", "content": "<|SPEECH_GENERATION_START|>"}
+    ]
+    # Note: The vLLM API will handle tokenization, so we return the raw prompt
+    # that includes the special tokens the model expects
+    return f"Convert the text to speech:<|TEXT_UNDERSTANDING_START|>{text}<|TEXT_UNDERSTANDING_END|><|SPEECH_GENERATION_START|>"
 
 async def generate_audio_chunks(
     text: str,
@@ -96,15 +104,18 @@ async def generate_audio_chunks(
     speech_start_found = False
     processed_codes = 0
     first_chunk_yielded = False
+    total_codes_found = 0
 
     async for chunk in response_stream:
         if chunk.choices and chunk.choices[0].text:
             new_text = chunk.choices[0].text
             accumulated_text += new_text
+            print(f"[STREAM] Received text chunk: {new_text[:100]}")
 
             if not speech_start_found:
                 if SPEECH_START in accumulated_text:
                     speech_start_found = True
+                    print(f"[SPEECH_START] Found speech start marker")
                     start_idx = accumulated_text.find(SPEECH_START) + len(SPEECH_START)
                     speech_text = accumulated_text[start_idx:]
                 else:
@@ -116,12 +127,18 @@ async def generate_audio_chunks(
             # Parse codes from <|s_XXXX|>
             codes = re.findall(r'<\|s_(\d+)\|>', speech_text)
             valid_codes = [int(c) for c in codes if 0 <= int(c) < 65536]
+            total_codes_found = len(valid_codes)
+            print(f"[CODES_FOUND] Total codes parsed so far: {total_codes_found}")
+            
+            if total_codes_found > 0:
+                print(f"[SAMPLE_CODES] First 5 codes: {valid_codes[:5]}")
 
             current_codes = len(valid_codes)
             decode_chunk_size = INITIAL_CHUNK_SIZE_CODES if not first_chunk_yielded else STREAM_CHUNK_SIZE_CODES
 
             if current_codes >= processed_codes + decode_chunk_size:
                 codes_to_decode = valid_codes[processed_codes: processed_codes + decode_chunk_size]
+                print(f"[DECODING] Decoding {len(codes_to_decode)} codes (processed: {processed_codes}, total: {current_codes})")
                 codes_tensor = torch.tensor(codes_to_decode, device=XCODEC_DEVICE).unsqueeze(0).unsqueeze(0)
 
                 with torch.no_grad():
@@ -130,28 +147,35 @@ async def generate_audio_chunks(
                 audio_np = audio_wave[0, 0].cpu().float().numpy()
                 audio_int16 = np.clip(audio_np * 32767, -32768, 32767).astype(np.int16)
                 pcm_bytes = audio_int16.tobytes()
+                
+                print(f"[AUDIO] Generated {len(pcm_bytes)} bytes of audio")
 
                 if pcm_bytes:
                     yield pcm_bytes
                     first_chunk_yielded = True
+                    print(f"[YIELD] Yielded audio chunk")
 
                 processed_codes += decode_chunk_size
 
     # Final remaining codes
+    print(f"[STREAM_END] Speech start found: {speech_start_found}, Total codes: {total_codes_found}")
     if speech_start_found:
         start_idx = accumulated_text.find(SPEECH_START) + len(SPEECH_START)
         speech_text = accumulated_text[start_idx:]
         codes = re.findall(r'<\|s_(\d+)\|>', speech_text)
         remaining_codes = [int(c) for c in codes if 0 <= int(c) < 65536]
+        print(f"[FINAL] Remaining codes to process: {len(remaining_codes) - processed_codes}")
         if len(remaining_codes) > processed_codes:
             final_codes = remaining_codes[processed_codes:]
             if final_codes:
+                print(f"[FINAL_DECODE] Decoding final {len(final_codes)} codes")
                 codes_tensor = torch.tensor(final_codes, device=XCODEC_DEVICE).unsqueeze(0).unsqueeze(0)
                 with torch.no_grad():
                     audio_wave = codec_model.decode_code(codes_tensor)
                 audio_np = audio_wave[0, 0].cpu().float().numpy()
                 audio_int16 = np.clip(audio_np * 32767, -32768, 32767).astype(np.int16)
                 pcm_bytes = audio_int16.tobytes()
+                print(f"[FINAL_AUDIO] Generated {len(pcm_bytes)} bytes of final audio")
                 if pcm_bytes:
                     yield pcm_bytes
 
