@@ -49,8 +49,9 @@ tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 
 codec_model = XCodec2Model.from_pretrained(XCODEC_MODEL_NAME)
 codec_model = codec_model.to(XCODEC_DEVICE).eval()
-if XCODEC_DEVICE == "cuda":
-    codec_model = codec_model.half()
+# Don't use half precision - causes issues with FFT operations
+# if XCODEC_DEVICE == "cuda":
+#     codec_model = codec_model.half()
 
 print(f"XCodec2 model loaded on {XCODEC_DEVICE}")
 print(f"Tokenizer loaded from {MODEL_NAME}")
