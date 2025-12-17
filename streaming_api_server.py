@@ -112,21 +112,15 @@ async def generate_audio_chunks(
             accumulated_text += new_text
             print(f"[STREAM] Received text chunk: {new_text[:100]}")
 
-            if not speech_start_found:
-                if SPEECH_START in accumulated_text:
-                    speech_start_found = True
-                    print(f"[SPEECH_START] Found speech start marker")
-                    start_idx = accumulated_text.find(SPEECH_START) + len(SPEECH_START)
-                    speech_text = accumulated_text[start_idx:]
-                else:
-                    continue
-            else:
-                start_idx = accumulated_text.find(SPEECH_START) + len(SPEECH_START)
-                speech_text = accumulated_text[start_idx:]
-
-            # Parse codes from <|s_XXXX|>
-            codes = re.findall(r'<\|s_(\d+)\|>', speech_text)
+            # Parse codes from <|s_XXXX|> anywhere in the accumulated text
+            codes = re.findall(r'<\|s_(\d+)\|>', accumulated_text)
             valid_codes = [int(c) for c in codes if 0 <= int(c) < 65536]
+            
+            # If we find codes, we've started speech generation (even if marker not found explicitly)
+            if valid_codes and not speech_start_found:
+                speech_start_found = True
+                print(f"[SPEECH_START] Detected speech codes in stream")
+
             total_codes_found = len(valid_codes)
             print(f"[CODES_FOUND] Total codes parsed so far: {total_codes_found}")
             
@@ -158,11 +152,9 @@ async def generate_audio_chunks(
                 processed_codes += decode_chunk_size
 
     # Final remaining codes
-    print(f"[STREAM_END] Speech start found: {speech_start_found}, Total codes: {total_codes_found}")
+    print(f"[STREAM_END] Speech start found: {speech_start_found}, Total codes: {total_codes_found}, Processed: {processed_codes}")
     if speech_start_found:
-        start_idx = accumulated_text.find(SPEECH_START) + len(SPEECH_START)
-        speech_text = accumulated_text[start_idx:]
-        codes = re.findall(r'<\|s_(\d+)\|>', speech_text)
+        codes = re.findall(r'<\|s_(\d+)\|>', accumulated_text)
         remaining_codes = [int(c) for c in codes if 0 <= int(c) < 65536]
         print(f"[FINAL] Remaining codes to process: {len(remaining_codes) - processed_codes}")
         if len(remaining_codes) > processed_codes:
@@ -178,6 +170,8 @@ async def generate_audio_chunks(
                 print(f"[FINAL_AUDIO] Generated {len(pcm_bytes)} bytes of final audio")
                 if pcm_bytes:
                     yield pcm_bytes
+        else:
+            print(f"[FINAL] No remaining codes (processed: {processed_codes}, total: {len(remaining_codes)})")
 
 @app.websocket("/v1/audio/speech/stream/ws")
 async def websocket_audio_stream(websocket: WebSocket):
