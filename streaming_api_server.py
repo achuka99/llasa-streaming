@@ -211,4 +211,4 @@ async def read_root():
 
 if __name__ == "__main__":
     print("Starting FastAPI server for Llasa TTS streaming...")
-    uvicorn.run("llasa_streaming_server:app", host="0.0.0.0", port=8001, reload=False)
+    uvicorn.run("streaming_api_server:app", host="0.0.0.0", port=8001, reload=False)
