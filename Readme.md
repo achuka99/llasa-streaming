@@ -10,4 +10,4 @@ pip install sentencepiece protobuf datasets huggingface_hub hf_transfer
 
 pip install frozendict torch transformers torchaudio
 
-vllm serve unsloth/Llasa-1B --dtype bfloat16 --max-model-len 8192 --enforce-eager --disable-custom-all-reduce --max-num-seqs 1 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.85 --trust-remote-code
+vllm serve unsloth/Llasa-1B --dtype bfloat16 --max-model-len 8192 --enforce-eager --disable-custom-all-reduce --max-num-seqs 1 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.75 --trust-remote-code

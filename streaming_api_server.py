@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import uvicorn
 import json
+import re
 
 # Configuration
 CUDA_VISIBLE_DEVICES = os.environ.get("CUDA_VISIBLE_DEVICES", "0")
@@ -91,7 +92,7 @@ async def generate_audio_chunks(
 
     response_stream = await client.completions.create(**stream_kwargs)
 
-    accumulated_tokens = []
+    accumulated_text = ""
     speech_start_found = False
     processed_codes = 0
     first_chunk_yielded = False
@@ -99,21 +100,22 @@ async def generate_audio_chunks(
     async for chunk in response_stream:
         if chunk.choices and chunk.choices[0].text:
             new_text = chunk.choices[0].text
-            new_ids = tokenizer.encode(new_text)
-            accumulated_tokens.extend(new_ids)
+            accumulated_text += new_text
 
             if not speech_start_found:
-                try:
-                    speech_start_idx = accumulated_tokens.index(tokenizer.convert_tokens_to_ids(SPEECH_START))
+                if SPEECH_START in accumulated_text:
                     speech_start_found = True
-                    code_tokens = accumulated_tokens[speech_start_idx + 1:]
-                except ValueError:
+                    start_idx = accumulated_text.find(SPEECH_START) + len(SPEECH_START)
+                    speech_text = accumulated_text[start_idx:]
+                else:
                     continue
             else:
-                code_tokens = accumulated_tokens[tokenizer.convert_tokens_to_ids(SPEECH_START) + 1:]
+                start_idx = accumulated_text.find(SPEECH_START) + len(SPEECH_START)
+                speech_text = accumulated_text[start_idx:]
 
-            # Llasa uses single codebook: codes are directly the token ids (0 to 65535)
-            valid_codes = [c for c in code_tokens if 0 <= c < 65536]
+            # Parse codes from <|s_XXXX|>
+            codes = re.findall(r'<\|s_(\d+)\|>', speech_text)
+            valid_codes = [int(c) for c in codes if 0 <= int(c) < 65536]
 
             current_codes = len(valid_codes)
             decode_chunk_size = INITIAL_CHUNK_SIZE_CODES if not first_chunk_yielded else STREAM_CHUNK_SIZE_CODES
@@ -137,7 +139,10 @@ async def generate_audio_chunks(
 
     # Final remaining codes
     if speech_start_found:
-        remaining_codes = [c for c in accumulated_tokens[accumulated_tokens.index(tokenizer.convert_tokens_to_ids(SPEECH_START)) + 1:] if 0 <= c < 65536]
+        start_idx = accumulated_text.find(SPEECH_START) + len(SPEECH_START)
+        speech_text = accumulated_text[start_idx:]
+        codes = re.findall(r'<\|s_(\d+)\|>', speech_text)
+        remaining_codes = [int(c) for c in codes if 0 <= int(c) < 65536]
         if len(remaining_codes) > processed_codes:
             final_codes = remaining_codes[processed_codes:]
             if final_codes:
