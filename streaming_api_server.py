@@ -38,8 +38,8 @@ AUDIO_SAMPLERATE = 16000  # XCodec2 uses 16kHz
 AUDIO_BITS_PER_SAMPLE = 16
 AUDIO_CHANNELS = 1
 
-STREAM_CHUNK_SIZE_CODES = 50   # Decode every ~50 codes for low latency
-INITIAL_CHUNK_SIZE_CODES = 10
+STREAM_CHUNK_SIZE_CODES = 200   # Decode every ~200 codes for better audio quality
+INITIAL_CHUNK_SIZE_CODES = 100  # Initial chunk slightly smaller to start streaming faster
 
 app = FastAPI()
 
@@ -125,7 +125,7 @@ async def generate_audio_chunks(
             total_codes_found = len(valid_codes)
             print(f"[CODES_FOUND] Total codes parsed so far: {total_codes_found}")
             
-            if total_codes_found > 0:
+            if total_codes_found > 0 and processed_codes == 0:
                 print(f"[SAMPLE_CODES] First 5 codes: {valid_codes[:5]}")
 
             current_codes = len(valid_codes)
@@ -134,21 +134,27 @@ async def generate_audio_chunks(
             if current_codes >= processed_codes + decode_chunk_size:
                 codes_to_decode = valid_codes[processed_codes: processed_codes + decode_chunk_size]
                 print(f"[DECODING] Decoding {len(codes_to_decode)} codes (processed: {processed_codes}, total: {current_codes})")
-                codes_tensor = torch.tensor(codes_to_decode, device=XCODEC_DEVICE).unsqueeze(0).unsqueeze(0)
-
-                with torch.no_grad():
-                    audio_wave = codec_model.decode_code(codes_tensor)
-
-                audio_np = audio_wave[0, 0].cpu().float().numpy()
-                audio_int16 = np.clip(audio_np * 32767, -32768, 32767).astype(np.int16)
-                pcm_bytes = audio_int16.tobytes()
                 
-                print(f"[AUDIO] Generated {len(pcm_bytes)} bytes of audio")
+                # Convert codes to tensor and decode
+                codes_tensor = torch.tensor(codes_to_decode, device=XCODEC_DEVICE, dtype=torch.long).unsqueeze(0).unsqueeze(0)
+                
+                try:
+                    with torch.no_grad():
+                        audio_wave = codec_model.decode_code(codes_tensor)
 
-                if pcm_bytes:
-                    yield pcm_bytes
-                    first_chunk_yielded = True
-                    print(f"[YIELD] Yielded audio chunk")
+                    audio_np = audio_wave[0, 0].cpu().float().numpy()
+                    audio_int16 = np.clip(audio_np * 32767, -32768, 32767).astype(np.int16)
+                    pcm_bytes = audio_int16.tobytes()
+                    
+                    print(f"[AUDIO] Generated {len(pcm_bytes)} bytes of audio ({len(codes_to_decode)} codes)")
+
+                    if pcm_bytes:
+                        yield pcm_bytes
+                        first_chunk_yielded = True
+                        print(f"[YIELD] Yielded audio chunk")
+                except Exception as e:
+                    print(f"[ERROR] Decoding error: {e}")
+                    raise
 
                 processed_codes += decode_chunk_size
 
@@ -162,15 +168,19 @@ async def generate_audio_chunks(
             final_codes = remaining_codes[processed_codes:]
             if final_codes:
                 print(f"[FINAL_DECODE] Decoding final {len(final_codes)} codes")
-                codes_tensor = torch.tensor(final_codes, device=XCODEC_DEVICE).unsqueeze(0).unsqueeze(0)
-                with torch.no_grad():
-                    audio_wave = codec_model.decode_code(codes_tensor)
-                audio_np = audio_wave[0, 0].cpu().float().numpy()
-                audio_int16 = np.clip(audio_np * 32767, -32768, 32767).astype(np.int16)
-                pcm_bytes = audio_int16.tobytes()
-                print(f"[FINAL_AUDIO] Generated {len(pcm_bytes)} bytes of final audio")
-                if pcm_bytes:
-                    yield pcm_bytes
+                codes_tensor = torch.tensor(final_codes, device=XCODEC_DEVICE, dtype=torch.long).unsqueeze(0).unsqueeze(0)
+                try:
+                    with torch.no_grad():
+                        audio_wave = codec_model.decode_code(codes_tensor)
+                    audio_np = audio_wave[0, 0].cpu().float().numpy()
+                    audio_int16 = np.clip(audio_np * 32767, -32768, 32767).astype(np.int16)
+                    pcm_bytes = audio_int16.tobytes()
+                    print(f"[FINAL_AUDIO] Generated {len(pcm_bytes)} bytes of final audio")
+                    if pcm_bytes:
+                        yield pcm_bytes
+                except Exception as e:
+                    print(f"[ERROR] Final decoding error: {e}")
+                    raise
         else:
             print(f"[FINAL] No remaining codes (processed: {processed_codes}, total: {len(remaining_codes)})")
 
